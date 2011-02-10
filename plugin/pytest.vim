@@ -5,85 +5,94 @@
 " License:     MIT
 "============================================================================
 
+
 if exists("g:loaded_pytest") || &cp 
   finish
 endif
 
 
 " Global variables for registering next/previous error
-let g:session_errors = {}
-let g:session_error = 0
-let g:last_session = ""
+let g:pytest_session_errors    = {}
+let g:pytest_session_error     = 0
+let g:pytest_last_session      = ""
+
 
 function! s:PytestSyntax() abort
   let b:current_syntax = 'pytest'
-  syn match PytestPlatform          '\v^(platform(.*))'
-  syn match PytestTitleDecoration   "\v\={2,}"
-  syn match PytestTitle             "\v\s+(test session starts)\s+"
-  syn match PytestCollecting        "\v(collecting\s+(.*))"
-  syn match PytestPythonFile        "\v((.*.py\s+))"
-  syn match PytestFooterFail        "\v\s+((.*)failed in(.*))\s+"
-  syn match PytestFooter            "\v\s+((.*)passed in(.*))\s+"
-  syn match PytestFileNumber        "\v^((.*)\.py)"
-  syn match PytestFailures          "\v\s+(FAILURES)\s+"
-  syn match PytestErrors            "\v^E\s+(.*)"
+  syn match PytestPlatform              '\v^(platform(.*))'
+  syn match PytestTitleDecoration       "\v\={2,}"
+  syn match PytestTitle                 "\v\s+(test session starts)\s+"
+  syn match PytestCollecting            "\v(collecting\s+(.*))"
+  syn match PytestPythonFile            "\v((.*.py\s+))"
+  syn match PytestFooterFail            "\v\s+((.*)(failed|error) in(.*))\s+"
+  syn match PytestFooter                "\v\s+((.*)passed in(.*))\s+"
+  syn match PytestFailures              "\v\s+(FAILURES|ERRORS)\s+"
+  syn match PytestErrors                "\v^E\s+(.*)"
+  syn match PytestDelimiter             "\v_{3,}"
+  syn match PytestFailedTest            "\v_{3,}\s+(.*)\s+_{3,}"
 
-  hi def link PytestPythonFile         String
-  hi def link PytestPlatform           String
-  hi def link PytestCollecting         String
-  hi def link PytestTitleDecoration    Comment
-  hi def link PytestTitle              String
-  hi def link PytestFooterFail         String
-  hi def link PytestFooter             String
-  hi def link PytestFileNumber         Function
-  hi def link PytestFailures           Function
-  hi def link PytestErrors             Function
-
+  hi def link PytestPythonFile          String
+  hi def link PytestPlatform            String
+  hi def link PytestCollecting          String
+  hi def link PytestTitleDecoration     Comment
+  hi def link PytestTitle               String
+  hi def link PytestFooterFail          String
+  hi def link PytestFooter              String
+  hi def link PytestFailures            Number
+  hi def link PytestErrors              Number
+  hi def link PytestDelimiter           Comment
+  hi def link PytestFailedTest          Comment
 endfunction
 
 
 function! s:PytestFailsSyntax() abort
   let b:current_syntax = 'pytestFails'
-  syn match PytestQDelimiter         "\v\s+(\=\=\>\>)\s+"
-  syn match PytestQLine              "Line:"
-  syn match PytestQPath              "\v\s+(Path:)\s+"
-  syn match PytestQEnds              "\v\s+(Ends On:)\s+"
+  syn match PytestQDelimiter            "\v\s+(\=\=\>\>)\s+"
+  syn match PytestQLine                 "Line:"
+  syn match PytestQPath                 "\v\s+(Path:)\s+"
+  syn match PytestQEnds                 "\v\s+(Ends On:)\s+"
 
-  hi def link PytestQDelimiter         Comment
-  hi def link PytestQLine              String
-  hi def link PytestQPath              String
-  hi def link PytestQEnds              String
+  hi def link PytestQDelimiter          Comment
+  hi def link PytestQLine               String
+  hi def link PytestQPath               String
+  hi def link PytestQEnds               String
 endfunction
 
 
 function! s:GoToError(direction)
-    " direction == 0 goes to first
-    " direction ==  1 goes forward
-    " direction == -1 goes backwards
-    " directtion == 2 goes to last
-    " directtion == 3 goes to the end of current error
-    if (len(g:session_errors) > 0)
+    "   0 goes to first
+    "   1 goes forward
+    "  -1 goes backwards
+    "   2 goes to last
+    "   3 goes to the end of current error
+    call s:ClearAll()
+    let going = "First"
+    if (len(g:pytest_session_errors) > 0)
         if (a:direction == -1)
-            if (g:session_error == 0 || g:session_error == 1)
-                let g:session_error = 1
+            let going = "Previous"
+            if (g:pytest_session_error == 0 || g:pytest_session_error == 1)
+                let g:pytest_session_error = 1
             else
-                let g:session_error = g:session_error - 1
+                let g:pytest_session_error = g:pytest_session_error - 1
             endif
         elseif (a:direction == 1)
-            if (g:session_error != len(g:session_errors))
-                let g:session_error = g:session_error + 1
+            let going = "Next"
+            if (g:pytest_session_error != len(g:pytest_session_errors))
+                let g:pytest_session_error = g:pytest_session_error + 1
             endif
         elseif (a:direction == 0)
-            let g:session_error = 1
+            let g:pytest_session_error = 1
         elseif (a:direction == 2)
-            let g:session_error = len(g:session_errors)
+            let going = "Last"
+            let g:pytest_session_error = len(g:pytest_session_errors)
         elseif (a:direction == 3)
-            if (g:session_error == 0 || g:session_error == 1)
-                let g:session_error = 1
+            if (g:pytest_session_error == 0 || g:pytest_session_error == 1)
+                let g:pytest_session_error = 1
             endif
-            let select_error = g:session_errors[g:session_error]
+            let select_error = g:pytest_session_errors[g:pytest_session_error]
             let line_number = select_error['file_line']
             let error_path = select_error['file_path']
+            let exception = select_error['exception']
             let file_name = expand("%:t")
             if error_path =~ file_name
                 execute line_number
@@ -91,14 +100,16 @@ function! s:GoToError(direction)
                 call s:OpenError(error_path)
                 execute line_number
             endif
-            let message = "End of Failed test: " . g:session_error . "\t at line ==>> " . line_number
+            let message = "End of Failed test: " . g:pytest_session_error . "\t ==>> " . exception
             call s:Echo(message, 1)
+            return
         endif
 
         if (a:direction != 3)
-            let select_error = g:session_errors[g:session_error]
+            let select_error = g:pytest_session_errors[g:pytest_session_error]
             let line_number = select_error['line']
             let error_path = select_error['path']
+            let exception = select_error['exception']
             let file_name = expand("%:t")
             if error_path =~ file_name
                 execute line_number
@@ -106,11 +117,12 @@ function! s:GoToError(direction)
                 call s:OpenError(error_path)
                 execute line_number
             endif
-            let message = "Failed test: " . g:session_error . "\t at line ==>> " . line_number
+            let message = going . " Failed test: " . g:pytest_session_error . "\t ==>> " . exception
             call s:Echo(message, 1)
+            return
         endif
     else
-        call s:Echo("Failed test list is empty.")
+        call s:Echo("Failed test list is empty")
     endif
 endfunction
 
@@ -207,9 +219,46 @@ function! s:OpenError(path)
 endfunction
 
 
-function! s:ShowFails()
-    if (len(g:session_errors) == 0)
-        call s:Echo("There are no failed tests from a previous run.")
+function! s:ShowError()
+    if (len(g:pytest_session_errors) == 0)
+        call s:Echo("No Failed test error from a previous run")
+        return
+    endif
+    if (g:pytest_session_error == 0)
+        let error_n = 1
+    else
+        let error_n = g:pytest_session_error
+    endif
+    let error_dict = g:pytest_session_errors[error_n]
+    if (error_dict['error'] == "")
+        call s:Echo("No failed test error saved from last run.")
+        return
+    endif
+
+	let winnr = bufwinnr('ShowError.pytest')
+	silent! execute  winnr < 0 ? 'botright new ' . ' ShowError.pytest' : winnr . 'wincmd w'
+	setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile number filetype=python
+    silent! execute 'nnoremap <silent> <buffer> q :q! <CR>'
+    let line_number = error_dict['file_line']
+    let error = error_dict['error']
+    let message = "Test Error: " . error
+    call append(0, error)
+    exe '0'
+    exe '0|'
+    silent! execute 'resize ' . line('$')
+    exe 'wincmd p'
+endfunction
+
+
+function! s:ShowFails(...)
+    au BufLeave *.pytest echo "" | redraw
+    if a:0 > 0
+        let gain_focus = a:0
+    else
+        let gain_focus = 0
+    endif
+    if (len(g:pytest_session_errors) == 0)
+        call s:Echo("No failed tests from a previous run")
         return
     endif
 	let winnr = bufwinnr('Fails.pytest')
@@ -219,42 +268,48 @@ function! s:ShowFails()
     exe "normal i" . blank_line 
     hi RedBar ctermfg=white ctermbg=red guibg=red
     match RedBar /\%1l/
-    for err in keys(g:session_errors)
-        let err_dict = g:session_errors[err]
+    for err in keys(g:pytest_session_errors)
+        let err_dict = g:pytest_session_errors[err]
         let line_number = err_dict['line']
-        let actual_error = err_dict['error']
+        let exception = err_dict['exception']
         let path_error = err_dict['path']
         let ends = err_dict['file_path']
         if (path_error == ends)
-            let message = "Line: " . line_number . "\t==>> " . actual_error . "\t\tPath: " . path_error
+            let message = "Line: " . line_number . "\t==>> " . exception . "\t\t Ends On: " . path_error
         else
-            let message = "Line: " . line_number . "\t==>> " . actual_error . "\t\tPath: " . path_error . "\t\tEnds On: " . ends
+            let message = "Line: " . line_number . "\t==>> " . exception . "\t\t Ends On: " . ends
         endif
         let error_number = err + 1
         call setline(error_number, message)    
     endfor
 	silent! execute 'resize ' . line('$')
     silent! execute 'nnoremap <silent> <buffer> q :q! <CR>'
+    silent! execute 'nnoremap <silent> <buffer> <Enter> :q! <CR>'
     call s:PytestFailsSyntax()
     exe "normal 0|h"
-    exe 'wincmd w'
+    if (! gain_focus)
+        exe 'wincmd p'
+    else
+        call s:Echo("Hit Return or q to exit", 1)
+    endif
 endfunction
 
 
 function! s:LastSession()
-    if (len(g:last_session) == 0)
-        call s:Echo("There is currently no saved last session to display.")
+    if (len(g:pytest_last_session) == 0)
+        call s:Echo("There is currently no saved last session to display")
         return
     endif
 	let winnr = bufwinnr('LastSession.pytest')
 	silent! execute  winnr < 0 ? 'botright new ' . 'LastSession.pytest' : winnr . 'wincmd w'
 	setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile nowrap number filetype=pytest
-    let session = split(g:last_session, '\n')
+    let session = split(g:pytest_last_session, '\n')
     call append(0, session)
 	silent! execute 'resize ' . line('$')
     silent! execute 'normal gg'
     silent! execute 'nnoremap <silent> <buffer> q :q! <CR>'
     call s:PytestSyntax()
+    exe 'wincmd p'
 endfunction
 
 
@@ -268,6 +323,7 @@ function! s:ToggleFailWindow()
     endif
 endfunction
 
+
 function! s:ToggleLastSession()
 	let winnr = bufwinnr('LastSession.pytest')
     if (winnr == -1)
@@ -278,27 +334,76 @@ function! s:ToggleLastSession()
     endif
 endfunction
 
+
+function! s:ToggleShowError()
+	let winnr = bufwinnr('ShowError.pytest')
+    if (winnr == -1)
+        call s:ShowError()
+    else
+        silent! execute winnr . 'wincmd w'
+        silent! execute 'q'
+    endif
+endfunction
+
+
+function! s:ClearAll()
+    let bufferL = [ 'Fails.pytest', 'LastSession.pytest', 'ShowError.pytest', 'PytestVerbose.pytest' ]
+    for b in bufferL
+        let winnr = bufwinnr(b)
+        if (winnr != -1)
+            silent! execute winnr . 'wincmd p'
+            silent! execute 'q'
+        endif
+    endfor
+endfunction
+
+
 function! s:RunPyTest(path)
-    let g:last_session = ""
+    let g:pytest_last_session = ""
     let cmd = "py.test --tb=short " . a:path
     let out = system(cmd)
     
+    " Pointers and default variables
+    let g:pytest_session_errors = {}
+    let g:pytest_session_error = 0
+    let g:pytest_last_session = out
+    " Loop through the output and build the error dict
+
+    for w in split(out, '\n')
+        if w =~ '\v\s+(FAILURES)\s+'
+            call s:ParseFailures(out)
+            return
+        elseif w =~ '\v\s+(ERRORS)\s+'
+            call s:ParseErrors(out)
+            return
+        elseif w =~ '\v^(.*)\s*ERROR:\s+'
+            call s:RedBar()
+            echo "py.test " . w
+            return
+        endif
+    endfor
+    call s:GreenBar()
+endfunction
+
+
+function! s:ParseFailures(stdout)
     " Pointers and default variables
     let failed = 0
     let errors = {}
     let error = {}
     let error_number = 0
     let pytest_error = ""
-    let g:session_errors = {}
-    let g:session_error = 0
-    let g:last_session = out
     let current_file = expand("%:t")
+    let file_regex =  '\v(^' . current_file . '|/' . current_file . ')'
     let error['line'] = ""
     let error['path'] = ""
-    let error['error'] = ""
+    let error['exception'] = ""
+    let g:chapa_debug_error = []
+    let g:chapa_debug_file = []
+    let g:chapa_debug_not_file = []
     " Loop through the output and build the error dict
-    for w in split(out, '\n')
-        if ((error.line != "") && (error.path != "") && (error.error != ""))
+    for w in split(a:stdout, '\n')
+        if ((error.line != "") && (error.path != "") && (error.exception != ""))
             try
                 let end_file_path = error['file_path']
             catch /^Vim\%((\a\+)\)\=:E/
@@ -310,54 +415,92 @@ function! s:RunPyTest(path)
             let error = {}
             let error['line'] = ""
             let error['path'] = ""
-            let error['error'] = ""
+            let error['exception'] = ""
         endif
 
-        if w =~ 'FAILURES'
+        if w =~ '\v\s+(FAILURES)\s+'
             let failed = 1
         elseif w =~ '\v^(.*)\.py:(\d+):'
-            if w =~ current_file
+            if w =~ file_regex
+                call insert(g:chapa_debug_file, w)
                 let match_result = matchlist(w, '\v:(\d+):')
                 let error.line = match_result[1]
                 let file_path = matchlist(w, '\v(.*.py):')
                 let error.path = file_path[1]
-            elseif w !~ current_file
+            elseif w !~ file_regex
+                call insert(g:chapa_debug_not_file, w)
                 let match_result = matchlist(w, '\v:(\d+):')
                 let error.file_line = match_result[1]
                 let file_path = matchlist(w, '\v(.*.py):')
                 let error.file_path = file_path[1]
             endif
-        elseif w =~  '\v^E\s+'
+        elseif w =~  '\v^E\s+(.*)\s+'
+            call insert(g:chapa_debug_error, w)        
             let split_error = split(w, "E ")
             let actual_error = substitute(split_error[0],"^\\s\\+\\|\\s\\+$","","g") 
-            let error.error = actual_error
-
-        elseif w =~ '\v^(.*)\s+ERROR:\s+'
+            let match_error = matchlist(actual_error, '\v(\w+):\s+(.*)')
+            if (len(match_error))
+                let error.exception = match_error[1]
+                let error.error = match_error[2]
+            else
+                let error.exception = "UnmatchedException"
+                let error.error = actual_error
+            endif
+        elseif w =~ '\v^(.*)\s*ERROR:\s+'
             let pytest_error = w
         endif
     endfor
-    
+
     " Display the result Bars
     if (failed == 1)
-        call s:RedBar()
-        for err in keys(errors)
-            let err_dict = errors[err]
-            let line_number = err_dict['line']
-            let actual_error = err_dict['error']
-            let path_error = err_dict['path']
-            let ends = err_dict['file_path']
-            if (path_error == ends)
-                echo "Line: " . line_number . "\t==>> " . actual_error . "\t\tPath: " . path_error
-            else
-                echo "Line: " . line_number . "\t==>> " . actual_error . "\t\tPath: " . path_error . "\t\tEnds On: " . ends
-            endif
-            let g:session_errors = errors
-        endfor
+        let g:pytest_session_errors = errors
+        call s:ShowFails(1)
     elseif (failed == 0 && pytest_error == "")
         call s:GreenBar()
     elseif (pytest_error != "")
         call s:RedBar()
         echo "py.test " . pytest_error
+    endif
+endfunction
+
+
+function! s:ParseErrors(stdout)
+    " Pointers and default variables
+    let failed = 0
+    let errors = {}
+    let error = {}
+    " Loop through the output and build the error dict
+
+    for w in split(a:stdout, '\n')
+        if w =~ '\v\s+(ERRORS)\s+'
+            let failed = 1
+        elseif w =~ '\v^E\s+(File)'
+            let match_line_no = matchlist(w, '\v\s+(line)\s+(\d+)')
+            let error['line'] = match_line_no[2]
+            let error['file_line'] = match_line_no[2]
+
+            let split_file = split(w, "E ")
+            let match_file = matchlist(split_file[0], '\v"(.*.py)"')
+            let error['file_path'] = match_file[1]
+            let error['path'] = match_file[1]
+        endif
+
+        if w =~ '\v^E\s+(\w+):\s+'
+            let split_error = split(w, "E ")
+            let match_error = matchlist(split_error[0], '\v(\w+):')
+            let error['exception'] = match_error[1]
+            let flat_error = substitute(split_error[0],"^\\s\\+\\|\\s\\+$","","g") 
+            let error.error = flat_error
+        endif
+    endfor
+    let errors[1] = error
+
+    " Display the result Bars
+    if (failed == 1)
+        let g:pytest_session_errors = errors
+        call s:ShowFails(1)
+    elseif (failed == 0)
+        call s:GreenBar()
     endif
 endfunction
 
@@ -385,10 +528,10 @@ function! s:ThisMethod(verbose)
     let c_name  = s:NameOfCurrentClass()
     let abspath = s:CurrentPath()
     if (strlen(m_name) == 1)
-        call s:Echo("Unable to find a matching method for testing.")
+        call s:Echo("Unable to find a matching method for testing")
         return
     elseif (strlen(c_name) == 1)
-        call s:Echo("Unable to find a matching class for testing.")
+        call s:Echo("Unable to find a matching class for testing")
         return
     endif
 
@@ -408,7 +551,7 @@ function! s:ThisClass(verbose)
     let c_name      = s:NameOfCurrentClass()
     let abspath     = s:CurrentPath()
     if (strlen(c_name) == 1)
-        call s:Echo("Unable to find a matching class for testing.")
+        call s:Echo("Unable to find a matching class for testing")
         return
     endif
     let message  = "py.test ==> Running tests for class " . c_name 
@@ -434,8 +577,18 @@ function! s:ThisFile(verbose)
 endfunction
     
 
+function! s:Version()
+    call s:Echo("pytest.vim version 0.0.5", 1)
+endfunction
+
+
 function! s:Completion(ArgLead, CmdLine, CursorPos)
-    return "class\nmethod\nfile\nverbose\nnext\nprevious\nfirst\nlast\nsession\nend\n"
+    let result_order = "first\nlast\nnext\nprevious\n"
+    let test_objects = "class\nmethod\nfile\n"
+    let optional     = "verbose\n"
+    let reports      = "fails\nerror\nsession\nend\n"
+    let pyversion    = "version\n"
+    return test_objects . result_order . reports . optional . pyversion
 endfunction
 
 
@@ -446,10 +599,13 @@ function! s:Proxy(action, ...)
         let verbose = 0
     endif
     if (a:action == "class")
+        call s:ClearAll()
         call s:ThisClass(verbose)
     elseif (a:action == "method")
+        call s:ClearAll()
         call s:ThisMethod(verbose)
     elseif (a:action == "file")
+        call s:ClearAll()
         call s:ThisFile(verbose)
     elseif (a:action == "fails")
         call s:ToggleFailWindow()
@@ -465,6 +621,10 @@ function! s:Proxy(action, ...)
         call s:GoToError(3)
     elseif (a:action == "session")
         call s:ToggleLastSession()
+    elseif (a:action == "error")
+        call s:ToggleShowError()
+    elseif (a:action == "version")
+        call s:Version()
     endif
 endfunction
 
