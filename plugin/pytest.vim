@@ -269,15 +269,15 @@ function! s:ShowFails(...)
     hi RedBar ctermfg=white ctermbg=red guibg=red
     match RedBar /\%1l/
     for err in keys(g:pytest_session_errors)
-        let err_dict = g:pytest_session_errors[err]
+        let err_dict    = g:pytest_session_errors[err]
         let line_number = err_dict['line']
-        let exception = err_dict['exception']
-        let path_error = err_dict['path']
-        let ends = err_dict['file_path']
+        let exception   = err_dict['exception']
+        let path_error  = err_dict['path']
+        let ends        = err_dict['file_path']
         if (path_error == ends)
-            let message = "Line: " . line_number . "\t==>> " . exception . "\t\t Ends On: " . path_error
+            let message = printf('Line: %-*u ==>> %-*s ==>> %s', 6, line_number, 24, exception, path_error)
         else
-            let message = "Line: " . line_number . "\t==>> " . exception . "\t\t Ends On: " . ends
+            let message = printf('Line: %-*u ==>> %-*s ==>> %s', 6, line_number, 24, exception, ends)
         endif
         let error_number = err + 1
         call setline(error_number, message)    
@@ -318,7 +318,7 @@ function! s:ToggleFailWindow()
     if (winnr == -1)
         call s:ShowFails()
     else
-        silent! execute winnr . 'wincmd w'
+        silent! execute winnr . 'wincmd p'
         silent! execute 'q'
     endif
 endfunction
@@ -329,7 +329,7 @@ function! s:ToggleLastSession()
     if (winnr == -1)
         call s:LastSession()
     else
-        silent! execute winnr . 'wincmd w'
+        silent! execute winnr . 'wincmd p'
         silent! execute 'q'
     endif
 endfunction
@@ -340,7 +340,7 @@ function! s:ToggleShowError()
     if (winnr == -1)
         call s:ShowError()
     else
-        silent! execute winnr . 'wincmd w'
+        silent! execute winnr . 'wincmd p'
         silent! execute 'q'
     endif
 endfunction
@@ -398,9 +398,6 @@ function! s:ParseFailures(stdout)
     let error['line'] = ""
     let error['path'] = ""
     let error['exception'] = ""
-    let g:chapa_debug_error = []
-    let g:chapa_debug_file = []
-    let g:chapa_debug_not_file = []
     " Loop through the output and build the error dict
     for w in split(a:stdout, '\n')
         if ((error.line != "") && (error.path != "") && (error.exception != ""))
@@ -422,20 +419,17 @@ function! s:ParseFailures(stdout)
             let failed = 1
         elseif w =~ '\v^(.*)\.py:(\d+):'
             if w =~ file_regex
-                call insert(g:chapa_debug_file, w)
                 let match_result = matchlist(w, '\v:(\d+):')
                 let error.line = match_result[1]
                 let file_path = matchlist(w, '\v(.*.py):')
                 let error.path = file_path[1]
             elseif w !~ file_regex
-                call insert(g:chapa_debug_not_file, w)
                 let match_result = matchlist(w, '\v:(\d+):')
                 let error.file_line = match_result[1]
                 let file_path = matchlist(w, '\v(.*.py):')
                 let error.file_path = file_path[1]
             endif
         elseif w =~  '\v^E\s+(.*)\s+'
-            call insert(g:chapa_debug_error, w)        
             let split_error = split(w, "E ")
             let actual_error = substitute(split_error[0],"^\\s\\+\\|\\s\\+$","","g") 
             let match_error = matchlist(actual_error, '\v(\w+):\s+(.*)')
@@ -478,13 +472,16 @@ function! s:ParseErrors(stdout)
             let match_line_no = matchlist(w, '\v\s+(line)\s+(\d+)')
             let error['line'] = match_line_no[2]
             let error['file_line'] = match_line_no[2]
-
             let split_file = split(w, "E ")
             let match_file = matchlist(split_file[0], '\v"(.*.py)"')
             let error['file_path'] = match_file[1]
             let error['path'] = match_file[1]
+        elseif w =~ '\v^(.*)\.py:(\d+):'
+            let match_result = matchlist(w, '\v:(\d+):')
+            let error.line = match_result[1]
+            let file_path = matchlist(w, '\v(.*.py):')
+            let error.path = file_path[1]
         endif
-
         if w =~ '\v^E\s+(\w+):\s+'
             let split_error = split(w, "E ")
             let match_error = matchlist(split_error[0], '\v(\w+):')
@@ -493,6 +490,12 @@ function! s:ParseErrors(stdout)
             let error.error = flat_error
         endif
     endfor
+    try
+        let end_file_path = error['file_path']
+    catch /^Vim\%((\a\+)\)\=:E/
+        let error.file_path = error.path
+        let error.file_line = error.line
+    endtry
     let errors[1] = error
 
     " Display the result Bars
@@ -523,7 +526,7 @@ function! s:GreenBar()
 endfunction
 
 
-function! s:ThisMethod(verbose)
+function! s:ThisMethod(verbose, ...)
     let m_name  = s:NameOfCurrentMethod()
     let c_name  = s:NameOfCurrentClass()
     let abspath = s:CurrentPath()
@@ -539,6 +542,10 @@ function! s:ThisMethod(verbose)
     let message = "py.test ==> Running test for method " . m_name 
     call s:Echo(message, 1)
 
+    if ((a:1 == '--pdb') || (a:1 == '-s'))
+        call s:Pdb(path, a:1)
+        return
+    endif
     if (a:verbose == 1)
         call s:RunInSplitWindow(path)
     else
@@ -547,7 +554,7 @@ function! s:ThisMethod(verbose)
 endfunction
 
 
-function! s:ThisClass(verbose)
+function! s:ThisClass(verbose, ...)
     let c_name      = s:NameOfCurrentClass()
     let abspath     = s:CurrentPath()
     if (strlen(c_name) == 1)
@@ -558,6 +565,12 @@ function! s:ThisClass(verbose)
     call s:Echo(message, 1)
 
     let path = abspath . "::" . c_name
+
+    if ((a:1 == '--pdb') || (a:1 == '-s'))
+        call s:Pdb(path, a:1)
+        return
+    endif
+
     if (a:verbose == 1)
         call s:RunInSplitWindow(path)
     else
@@ -566,19 +579,31 @@ function! s:ThisClass(verbose)
 endfunction
 
 
-function! s:ThisFile(verbose)
+function! s:ThisFile(verbose, ...)
     call s:Echo("py.test ==> Running tests for entire file ", 1)
     let abspath     = s:CurrentPath()
+
+    if ((a:1 == '--pdb') || (a:1 == '-s'))
+        call s:Pdb(abspath, a:1)
+        return
+    endif
+
     if (a:verbose == 1)
         call s:RunInSplitWindow(abspath)
     else
         call s:RunPyTest(abspath)
     endif
 endfunction
-    
+
+
+function! s:Pdb(path, ...)
+    let pdb_command = "py.test " . a:1 . " " . a:path
+    exe ":!" . pdb_command
+endfunction
+
 
 function! s:Version()
-    call s:Echo("pytest.vim version 0.0.5", 1)
+    call s:Echo("pytest.vim version 0.6.0", 1)
 endfunction
 
 
@@ -588,25 +613,34 @@ function! s:Completion(ArgLead, CmdLine, CursorPos)
     let optional     = "verbose\n"
     let reports      = "fails\nerror\nsession\nend\n"
     let pyversion    = "version\n"
-    return test_objects . result_order . reports . optional . pyversion
+    let pdb          = "--pdb\n-s\n"
+    return test_objects . result_order . reports . optional . pyversion . pdb
 endfunction
 
 
 function! s:Proxy(action, ...)
-    if (a:0 == 1)
-        let verbose = 1
-    else
-        let verbose = 0
+    " Some defaults
+    let verbose = 0
+    let pdb     = 'False'
+
+    if (a:0 > 0)
+        if (a:1 == 'verbose')
+            let verbose = 1
+        elseif (a:1 == '--pdb')
+            let pdb = '--pdb'
+        elseif (a:1 == '-s')
+            let pdb = '-s'
+        endif
     endif
     if (a:action == "class")
         call s:ClearAll()
-        call s:ThisClass(verbose)
+        call s:ThisClass(verbose, pdb)
     elseif (a:action == "method")
         call s:ClearAll()
-        call s:ThisMethod(verbose)
+        call s:ThisMethod(verbose, pdb)
     elseif (a:action == "file")
         call s:ClearAll()
-        call s:ThisFile(verbose)
+        call s:ThisFile(verbose, pdb)
     elseif (a:action == "fails")
         call s:ToggleFailWindow()
     elseif (a:action == "next")
