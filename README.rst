@@ -33,16 +33,17 @@ All arguments are able to be tab-completed.
 
 Python Objects
 --------------
-For running tests the plugin provides 3 arguments with an optional one. 
+For running tests the plugin provides 4 arguments with an optional one. 
 These arguments are::
 
     class
     method
+    function
     file
 
 
-As you may expect, those will focus on the tests for the current class, method
-or the whole file.
+As you may expect, those will focus on the tests for the current class, method,
+function or the whole file.
 
 If you are in a class and want to run all the tests for that class, you would
 call this plugin like::
@@ -144,7 +145,7 @@ Use this option when you need to use the built-in pdb support from py.test
     :Pytest class --pdb
 
 The above command shows `class` but you can use this with all the objects
-supported (`class`, `method` and `file`).
+supported (`class`, `method` , `function` and `file`).
 
 
 **py.test no capture**
@@ -156,7 +157,7 @@ in the no-capture flag::
     :Pytest class -s
 
 Again the above command shows `class` but you can use this with all the objects
-supported (`class`, `method` and `file`).
+supported (`class`, `method`, `function` and `file`).
 
 Shell Support
 -------------
@@ -164,6 +165,50 @@ This plugin provides a way to have a better shell experience when running
 `verbose` or `pdb` flags by using the `Conque.vim` plugin. If you have this
 most excellent piece of Vim plugin (see: http://www.vim.org/scripts/script.php?script_id=2771)
 then `pytest.vim` will use that instead of Vim's own dumb shell environment.
+
+`looponfail` 
+---------------
+This is an *extra* option that will allow you to loop (run again) on fail.
+If the test fails, then this option will make Vim run the same test again as 
+soon as the file is written.
+
+Once the test passes, it will no longer re-run the tests again. This option is
+available for `class`, `method`, `function` and `file`.
+You would call it like::
+
+    :Pytest method looponfail
+
+`clear`
+-------
+If for some reason you need to reset and clear all global variables that affect
+the plugin you can do so by running the following command::
+
+    :Pytest clear
+
+This is specifically useful when `looponfail` has been enabled and you want to
+stop its automatic behavior. Remember that `looponfail` will run every time you 
+write the buffer and will keep doing so unless your test passes.
+
+Fast Next/Previous Error
+------------------------
+Now when the Failed Error list is open and it as focus (cursor is currently in
+that window) you can move to the next or previous failed test line by using the
+arrow keys, `j`/`k`  or `Ctrl-n` / `Ctrl-p`
+
+Whenever you hit the bottom or the top of the list, you can loop around it!
+
+If you hit an error that displays not the previous window (e.g. your test file)
+then a message will state that it is skipping.
+
+
+Development Release
+===================
+If you are checking out this plugin from the Git repository instead of an
+official release from vim.org then you need to know that some
+things/implementations are considered *alpha* (they WILL break!). I usually
+list them here, so please take note before using them.
+
+The current development version does not have any un-released features.
 
 
 License

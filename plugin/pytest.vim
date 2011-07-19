@@ -1,5 +1,5 @@
 " File:        pytest.vim
-" Description: Runs the current test Class/Method/Function with
+" Description: Runs the current test Class/Method/Function/File with
 "              py.test 
 " Maintainer:  Alfredo Deza <alfredodeza AT gmail.com>
 " License:     MIT
@@ -15,6 +15,7 @@ endif
 let g:pytest_session_errors    = {}
 let g:pytest_session_error     = 0
 let g:pytest_last_session      = ""
+let g:pytest_looponfail        = 0
 
 
 function! s:PytestSyntax() abort
@@ -58,6 +59,101 @@ function! s:PytestFailsSyntax() abort
   hi def link PytestQEnds               String
 endfunction
 
+
+function! s:LoopOnFail(type)
+
+    if g:pytest_looponfail == 1
+        if a:type == 'method'
+            autocmd! BufWritePost *.py call s:LoopProxy('method')
+        elseif a:type == 'class'
+            autocmd! BufWritePost *.py call s:LoopProxy('class')
+        elseif a:type == 'function'
+            autocmd! BufWritePost *.py call s:LoopProxy('function')
+        elseif a:type == 'file'
+            autocmd! BufWritePost *.py call s:LoopProxy('file')
+        endif
+    else
+        au! 
+    endif
+
+endfunction
+
+
+function! s:LoopProxy(type)
+    " Very repetitive function, but allows specific function
+    " calling when autocmd is executed
+    if g:pytest_looponfail == 1
+        if a:type == 'method'
+            call s:ThisMethod(0, 'False')
+        elseif a:type == 'class'
+            call s:ThisClass(0, 'False')
+        elseif a:type == 'function'
+            call s:ThisFunction(0, 'False')
+        elseif a:type == 'file'
+            call s:ThisFile(0, 'False')
+        endif
+
+        " Go to the very bottom window
+        call feedkeys("\<C-w>b", 'n')
+    else
+        au! 
+    endif
+endfunction
+
+
+function! s:GoToInlineError(direction)
+    let orig_line = line('.')
+    let last_line = line('$')
+
+    " Move to the line we need
+    let move_to = orig_line + a:direction
+
+    if move_to > last_line
+        let move_to = 1
+        exe move_to
+    elseif move_to <= 1 
+        let move_to = last_line
+        exe move_to
+    else
+        exe move_to
+    endif
+
+    if move_to == 1
+        let _num = move_to
+    else
+        let _num = move_to - 1
+    endif
+
+    "  Goes to the current open window that matches
+    "  the error path and moves you there. Pretty awesome
+    if (len(g:pytest_session_errors) > 0)
+        let select_error = g:pytest_session_errors[_num]
+        let line_number  = select_error['file_line']
+        let error_path   = select_error['file_path']
+        let exception    = select_error['exception']
+
+        " Go to previous window
+        exe 'wincmd p'
+        let file_name    = expand("%:t")
+        if error_path =~ file_name
+            execute line_number
+            execute 'normal zz'
+            exe 'wincmd p'
+            let orig_line = _num+1
+            exe orig_line
+            let message = "Failed test: " . _num . "\t ==>> " . exception
+            call s:Echo(message, 1)
+            return
+        else " we might have an error on another file
+            let message = "Failed test on different buffer. Skipping..."
+            call s:Echo(message, 1)
+            exe 'wincmd p'
+        endif
+
+    else
+        call s:Echo("Failed test list is empty")
+    endif
+endfunction
 
 function! s:GoToError(direction)
     "   0 goes to first
@@ -191,6 +287,19 @@ function! s:NameOfCurrentMethod()
 endfunction
 
 
+function! s:NameOfCurrentFunction()
+    let save_cursor = getpos(".")
+    normal $<cr>
+    let find_object = s:FindPythonObject('function')
+    if (find_object)
+        let line = getline('.')
+        call setpos('.', save_cursor)
+        let match_result = matchlist(line, ' *def \+\(\w\+\)')
+        return match_result[1]
+    endif
+endfunction
+
+
 function! s:CurrentPath()
     let cwd = expand("%:p")
     return cwd
@@ -224,6 +333,7 @@ endfunction
 
 
 function! s:ShowError()
+    call s:ClearAll()
     if (len(g:pytest_session_errors) == 0)
         call s:Echo("No Failed test error from a previous run")
         return
@@ -255,6 +365,7 @@ endfunction
 
 
 function! s:ShowFails(...)
+    call s:ClearAll()
     au BufLeave *.pytest echo "" | redraw
     if a:0 > 0
         let gain_focus = a:0
@@ -287,8 +398,14 @@ function! s:ShowFails(...)
         call setline(error_number, message)    
     endfor
 	silent! execute 'resize ' . line('$')
-    silent! execute 'nnoremap <silent> <buffer> q :q! <CR>'
-    silent! execute 'nnoremap <silent> <buffer> <Enter> :q! <CR>'
+    nnoremap <silent> <buffer> q       :q! <CR>
+    nnoremap <silent> <buffer> <Enter> :q! <CR>
+    nnoremap <script> <buffer> <C-n>   :call <sid>GoToInlineError(1)<CR>
+    nnoremap <script> <buffer> <down>  :call <sid>GoToInlineError(1)<CR>
+    nnoremap <script> <buffer> j       :call <sid>GoToInlineError(1)<CR>
+    nnoremap <script> <buffer> <C-p>   :call <sid>GoToInlineError(-1)<CR>
+    nnoremap <script> <buffer> <up>    :call <sid>GoToInlineError(-1)<CR>
+    nnoremap <script> <buffer> k       :call <sid>GoToInlineError(-1)<CR>
     call s:PytestFailsSyntax()
     exe "normal 0|h"
     if (! gain_focus)
@@ -300,6 +417,7 @@ endfunction
 
 
 function! s:LastSession()
+    call s:ClearAll()
     if (len(g:pytest_last_session) == 0)
         call s:Echo("There is currently no saved last session to display")
         return
@@ -322,7 +440,7 @@ function! s:ToggleFailWindow()
     if (winnr == -1)
         call s:ShowFails()
     else
-        silent! execute winnr . 'wincmd p'
+        silent! execute winnr . 'wincmd w'
         silent! execute 'q'
     endif
 endfunction
@@ -333,7 +451,7 @@ function! s:ToggleLastSession()
     if (winnr == -1)
         call s:LastSession()
     else
-        silent! execute winnr . 'wincmd p'
+        silent! execute winnr . 'wincmd w'
         silent! execute 'q'
     endif
 endfunction
@@ -344,7 +462,7 @@ function! s:ToggleShowError()
     if (winnr == -1)
         call s:ShowError()
     else
-        silent! execute winnr . 'wincmd p'
+        silent! execute winnr . 'wincmd w'
         silent! execute 'q'
     endif
 endfunction
@@ -353,13 +471,23 @@ endfunction
 function! s:ClearAll()
     let bufferL = [ 'Fails.pytest', 'LastSession.pytest', 'ShowError.pytest', 'PytestVerbose.pytest' ]
     for b in bufferL
-        let winnr = bufwinnr(b)
-        if (winnr != -1)
-            silent! execute winnr . 'wincmd p'
+        let _window = bufwinnr(b)
+        if (_window != -1)
+            silent! execute _window . 'wincmd w'
             silent! execute 'q'
         endif
     endfor
+
 endfunction
+
+
+function! s:ResetAll()
+    " Resets all global vars
+    let g:pytest_session_errors    = {}
+    let g:pytest_session_error     = 0
+    let g:pytest_last_session      = ""
+    let g:pytest_looponfail        = 0
+endfunction!
 
 
 function! s:RunPyTest(path)
@@ -369,9 +497,8 @@ function! s:RunPyTest(path)
     
     " Pointers and default variables
     let g:pytest_session_errors = {}
-    let g:pytest_session_error = 0
-    let g:pytest_last_session = out
-    " Loop through the output and build the error dict
+    let g:pytest_session_error  = 0
+    let g:pytest_last_session   = out
 
     for w in split(out, '\n')
         if w =~ '\v\s+(FAILURES)\s+'
@@ -382,11 +509,20 @@ function! s:RunPyTest(path)
             return
         elseif w =~ '\v^(.*)\s*ERROR:\s+'
             call s:RedBar()
-            echo "py.test " . w
+            echo "py.test had an Error, see :Pytest session for more information" 
+            return
+        elseif w =~ '\v^(.*)\s*INTERNALERROR'
+            call s:RedBar()
+            echo "py.test had an InternalError, see :Pytest session for more information" 
             return
         endif
     endfor
     call s:GreenBar()
+
+    " If looponfail is set we no longer need it
+    " So clear the autocomand and set the global var to 0
+    let g:pytest_looponfail = 0
+    call s:LoopOnFail(0)
 endfunction
 
 
@@ -531,6 +667,7 @@ endfunction
 
 
 function! s:ThisMethod(verbose, ...)
+    call s:ClearAll()
     let m_name  = s:NameOfCurrentMethod()
     let c_name  = s:NameOfCurrentClass()
     let abspath = s:CurrentPath()
@@ -553,12 +690,39 @@ function! s:ThisMethod(verbose, ...)
     if (a:verbose == 1)
         call s:RunInSplitWindow(path)
     else
+       call s:RunPyTest(path)
+    endif
+endfunction
+
+
+function! s:ThisFunction(verbose, ...)
+    call s:ClearAll()
+    let c_name      = s:NameOfCurrentFunction()
+    let abspath     = s:CurrentPath()
+    if (strlen(c_name) == 1)
+        call s:Echo("Unable to find a matching function for testing")
+        return
+    endif
+    let message  = "py.test ==> Running tests for function " . c_name 
+    call s:Echo(message, 1)
+
+    let path = abspath . "::" . c_name
+
+    if ((a:1 == '--pdb') || (a:1 == '-s'))
+        call s:Pdb(path, a:1)
+        return
+    endif
+
+    if (a:verbose == 1)
+        call s:RunInSplitWindow(path)
+    else
         call s:RunPyTest(path)
     endif
 endfunction
 
 
 function! s:ThisClass(verbose, ...)
+    call s:ClearAll()
     let c_name      = s:NameOfCurrentClass()
     let abspath     = s:CurrentPath()
     if (strlen(c_name) == 1)
@@ -584,6 +748,7 @@ endfunction
 
 
 function! s:ThisFile(verbose, ...)
+    call s:ClearAll()
     call s:Echo("py.test ==> Running tests for entire file ", 1)
     let abspath     = s:CurrentPath()
 
@@ -611,14 +776,14 @@ endfunction
 
 
 function! s:Version()
-    call s:Echo("pytest.vim version 0.6.0", 1)
+    call s:Echo("pytest.vim version 1.0.0", 1)
 endfunction
 
 
 function! s:Completion(ArgLead, CmdLine, CursorPos)
     let result_order = "first\nlast\nnext\nprevious\n"
     let test_objects = "class\nmethod\nfile\n"
-    let optional     = "verbose\n"
+    let optional     = "verbose\nlooponfail\nclear\n"
     let reports      = "fails\nerror\nsession\nend\n"
     let pyversion    = "version\n"
     let pdb          = "--pdb\n-s\n"
@@ -630,6 +795,7 @@ function! s:Proxy(action, ...)
     " Some defaults
     let verbose = 0
     let pdb     = 'False'
+    let looponfail = 0
 
     if (a:0 > 0)
         if (a:1 == 'verbose')
@@ -638,17 +804,39 @@ function! s:Proxy(action, ...)
             let pdb = '--pdb'
         elseif (a:1 == '-s')
             let pdb = '-s'
+        elseif (a:1 == 'looponfail')
+            let g:pytest_looponfail = 1
+            let looponfail = 1
         endif
     endif
     if (a:action == "class")
-        call s:ClearAll()
-        call s:ThisClass(verbose, pdb)
+        if looponfail == 1
+            call s:LoopOnFail(a:action)
+            call s:ThisClass(verbose, pdb)
+        else
+            call s:ThisClass(verbose, pdb)
+        endif
     elseif (a:action == "method")
-        call s:ClearAll()
-        call s:ThisMethod(verbose, pdb)
+        if looponfail == 1
+            call s:LoopOnFail(a:action)
+            call s:ThisMethod(verbose, pdb)
+        else
+            call s:ThisMethod(verbose, pdb)
+        endif
+    elseif (a:action == "function")
+        if looponfail == 1
+            call s:LoopOnFail(a:action)
+            call s:ThisFunction(verbose, pdb)
+        else
+            call s:ThisFunction(verbose, pdb)
+        endif
     elseif (a:action == "file")
-        call s:ClearAll()
-        call s:ThisFile(verbose, pdb)
+        if looponfail == 1
+            call s:LoopOnFail(a:action)
+            call s:ThisFile(verbose, pdb)
+        else
+            call s:ThisFile(verbose, pdb)
+        endif
     elseif (a:action == "fails")
         call s:ToggleFailWindow()
     elseif (a:action == "next")
@@ -665,8 +853,13 @@ function! s:Proxy(action, ...)
         call s:ToggleLastSession()
     elseif (a:action == "error")
         call s:ToggleShowError()
+    elseif (a:action == "clear")
+        call s:ClearAll()
+        call s:ResetAll()
     elseif (a:action == "version")
         call s:Version()
+    else
+        call s:Echo("Not a valid Pytest option ==> " . a:action)
     endif
 endfunction
 
