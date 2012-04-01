@@ -1,12 +1,12 @@
 " File:        pytest.vim
 " Description: Runs the current test Class/Method/Function/File with
-"              py.test 
+"              py.test
 " Maintainer:  Alfredo Deza <alfredodeza AT gmail.com>
 " License:     MIT
 "============================================================================
 
 
-if exists("g:loaded_pytest") || &cp 
+if exists("g:loaded_pytest") || &cp
   finish
 endif
 
@@ -62,8 +62,11 @@ endfunction
 
 function! s:LoopOnFail(type)
 
-    if g:pytest_looponfail == 1
-        if a:type == 'method'
+    augroup pytest_loop_autocmd
+        au!
+        if g:pytest_looponfail == 0
+            return
+        elseif a:type == 'method'
             autocmd! BufWritePost *.py call s:LoopProxy('method')
         elseif a:type == 'class'
             autocmd! BufWritePost *.py call s:LoopProxy('class')
@@ -72,9 +75,7 @@ function! s:LoopOnFail(type)
         elseif a:type == 'file'
             autocmd! BufWritePost *.py call s:LoopProxy('file')
         endif
-    else
-        au! 
-    endif
+    augroup END
 
 endfunction
 
@@ -96,8 +97,16 @@ function! s:LoopProxy(type)
         " Go to the very bottom window
         call feedkeys("\<C-w>b", 'n')
     else
-        au! 
+        au! pytest_loop_autocmd
     endif
+endfunction
+
+
+" Close the Pytest buffer if it is the last one open
+function! s:CloseIfLastWindow()
+  if winnr("$") == 1
+    q
+  endif
 endfunction
 
 
@@ -111,7 +120,7 @@ function! s:GoToInlineError(direction)
     if move_to > last_line
         let move_to = 1
         exe move_to
-    elseif move_to <= 1 
+    elseif move_to <= 1
         let move_to = last_line
         exe move_to
     else
@@ -137,7 +146,7 @@ function! s:GoToInlineError(direction)
         let file_name    = expand("%:t")
         if error_path =~ file_name
             execute line_number
-            execute 'normal zz'
+            execute 'normal! zz'
             exe 'wincmd p'
             let orig_line = _num+1
             exe orig_line
@@ -240,8 +249,9 @@ endfun
 " Always goes back to the first instance
 " and returns that if found
 function! s:FindPythonObject(obj)
-    let orig_line = line('.')
-    let orig_col = col('.')
+    let orig_line   = line('.')
+    let orig_col    = col('.')
+    let orig_indent = indent(orig_line)
 
     if (a:obj == "class")
         let objregexp  = '\v^\s*(.*class)\s+(\w+)\s*'
@@ -252,18 +262,23 @@ function! s:FindPythonObject(obj)
     endif
 
     let flag = "Wb"
-    let result = search(objregexp, flag)
 
-    if result 
-        return result
-    endif
+    while search(objregexp, flag) > 0
+        "
+        " Very naive, but if the indent is less than or equal to four
+        " keep on going because we assume you are nesting.
+        "
+        if indent(line('.')) <= 4
+            return 1
+        endif
+    endwhile
 
 endfunction
 
 
 function! s:NameOfCurrentClass()
     let save_cursor = getpos(".")
-    normal $<cr>
+    normal! $<cr>
     let find_object = s:FindPythonObject('class')
     if (find_object)
         let line = getline('.')
@@ -276,7 +291,7 @@ endfunction
 
 function! s:NameOfCurrentMethod()
     let save_cursor = getpos(".")
-    normal $<cr>
+    normal! $<cr>
     let find_object = s:FindPythonObject('method')
     if (find_object)
         let line = getline('.')
@@ -289,7 +304,7 @@ endfunction
 
 function! s:NameOfCurrentFunction()
     let save_cursor = getpos(".")
-    normal $<cr>
+    normal! $<cr>
     let find_object = s:FindPythonObject('function')
     if (find_object)
         let line = getline('.')
@@ -308,7 +323,7 @@ endfunction
 
 function! s:RunInSplitWindow(path)
     let cmd = "py.test --tb=short " . a:path
-    if exists("g:ConqueTerm_Loaded") 
+    if exists("g:ConqueTerm_Loaded")
         call conque_term#open(cmd, ['split', 'resize 20'], 0)
     else
         let command = join(map(split(cmd), 'expand(v:val)'))
@@ -320,15 +335,17 @@ function! s:RunInSplitWindow(path)
         silent! execute 'nnoremap <silent> <buffer> q :q! <CR>'
         call s:PytestSyntax()
     endif
+    autocmd! BufEnter LastSession.pytest call s:CloseIfLastWindow()
 endfunction
 
 
 function! s:OpenError(path)
 	let winnr = bufwinnr('GoToError.pytest')
 	silent! execute  winnr < 0 ? 'botright new ' . ' GoToError.pytest' : winnr . 'wincmd w'
-	setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile nowrap number 
+	setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile nowrap number
     silent! execute ":e " . a:path
     silent! execute 'nnoremap <silent> <buffer> q :q! <CR>'
+    autocmd! BufEnter LastSession.pytest call s:CloseIfLastWindow()
 endfunction
 
 
@@ -351,7 +368,8 @@ function! s:ShowError()
 
 	let winnr = bufwinnr('ShowError.pytest')
 	silent! execute  winnr < 0 ? 'botright new ' . ' ShowError.pytest' : winnr . 'wincmd w'
-	setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile number filetype=python
+	setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile number nowrap
+    autocmd! BufEnter LastSession.pytest call s:CloseIfLastWindow()
     silent! execute 'nnoremap <silent> <buffer> q :q! <CR>'
     let line_number = error_dict['file_line']
     let error = error_dict['error']
@@ -380,7 +398,7 @@ function! s:ShowFails(...)
 	silent! execute  winnr < 0 ? 'botright new ' . 'Fails.pytest' : winnr . 'wincmd w'
 	setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile nowrap number filetype=pytest
     let blank_line = repeat(" ",&columns - 1)
-    exe "normal i" . blank_line 
+    exe "normal! i" . blank_line
     hi RedBar ctermfg=white ctermbg=red guibg=red
     match RedBar /\%1l/
     for err in keys(g:pytest_session_errors)
@@ -395,11 +413,12 @@ function! s:ShowFails(...)
             let message = printf('Line: %-*u ==>> %-*s ==>> %s', 6, line_number, 24, exception, ends)
         endif
         let error_number = err + 1
-        call setline(error_number, message)    
+        call setline(error_number, message)
     endfor
 	silent! execute 'resize ' . line('$')
-    nnoremap <silent> <buffer> q       :q! <CR>
-    nnoremap <silent> <buffer> <Enter> :q! <CR>
+    autocmd! BufEnter LastSession.pytest call s:CloseIfLastWindow()
+    nnoremap <silent> <buffer> q       :call <sid>ClearAll(1)<CR>
+    nnoremap <silent> <buffer> <Enter> :call <sid>ClearAll(1)<CR>
     nnoremap <script> <buffer> <C-n>   :call <sid>GoToInlineError(1)<CR>
     nnoremap <script> <buffer> <down>  :call <sid>GoToInlineError(1)<CR>
     nnoremap <script> <buffer> j       :call <sid>GoToInlineError(1)<CR>
@@ -407,7 +426,7 @@ function! s:ShowFails(...)
     nnoremap <script> <buffer> <up>    :call <sid>GoToInlineError(-1)<CR>
     nnoremap <script> <buffer> k       :call <sid>GoToInlineError(-1)<CR>
     call s:PytestFailsSyntax()
-    exe "normal 0|h"
+    exe "normal! 0|h"
     if (! gain_focus)
         exe 'wincmd p'
     else
@@ -428,8 +447,10 @@ function! s:LastSession()
     let session = split(g:pytest_last_session, '\n')
     call append(0, session)
 	silent! execute 'resize ' . line('$')
-    silent! execute 'normal gg'
-    silent! execute 'nnoremap <silent> <buffer> q :q! <CR>'
+    silent! execute 'normal! gg'
+    autocmd! BufEnter LastSession.pytest call s:CloseIfLastWindow()
+    nnoremap <silent> <buffer> q       :call <sid>ClearAll(1)<CR>
+    nnoremap <silent> <buffer> <Enter> :call <sid>ClearAll(1)<CR>
     call s:PytestSyntax()
     exe 'wincmd p'
 endfunction
@@ -442,6 +463,7 @@ function! s:ToggleFailWindow()
     else
         silent! execute winnr . 'wincmd w'
         silent! execute 'q'
+        silent! execute 'wincmd p'
     endif
 endfunction
 
@@ -453,6 +475,7 @@ function! s:ToggleLastSession()
     else
         silent! execute winnr . 'wincmd w'
         silent! execute 'q'
+        silent! execute 'wincmd p'
     endif
 endfunction
 
@@ -464,11 +487,12 @@ function! s:ToggleShowError()
     else
         silent! execute winnr . 'wincmd w'
         silent! execute 'q'
+        silent! execute 'wincmd p'
     endif
 endfunction
 
 
-function! s:ClearAll()
+function! s:ClearAll(...)
     let bufferL = [ 'Fails.pytest', 'LastSession.pytest', 'ShowError.pytest', 'PytestVerbose.pytest' ]
     for b in bufferL
         let _window = bufwinnr(b)
@@ -477,7 +501,13 @@ function! s:ClearAll()
             silent! execute 'q'
         endif
     endfor
-
+    " Remove any echoed messages
+    if (a:0 == 1)
+        " Try going back to our starting window
+        " and remove any left messages
+        call s:Echo('')
+        silent! execute 'wincmd p'
+    endif
 endfunction
 
 
@@ -494,7 +524,7 @@ function! s:RunPyTest(path)
     let g:pytest_last_session = ""
     let cmd = "py.test --tb=short " . a:path
     let out = system(cmd)
-    
+
     " Pointers and default variables
     let g:pytest_session_errors = {}
     let g:pytest_session_error  = 0
@@ -509,11 +539,11 @@ function! s:RunPyTest(path)
             return
         elseif w =~ '\v^(.*)\s*ERROR:\s+'
             call s:RedBar()
-            echo "py.test had an Error, see :Pytest session for more information" 
+            echo "py.test had an Error, see :Pytest session for more information"
             return
         elseif w =~ '\v^(.*)\s*INTERNALERROR'
             call s:RedBar()
-            echo "py.test had an InternalError, see :Pytest session for more information" 
+            echo "py.test had an InternalError, see :Pytest session for more information"
             return
         endif
     endfor
@@ -571,7 +601,7 @@ function! s:ParseFailures(stdout)
             endif
         elseif w =~  '\v^E\s+(.*)\s+'
             let split_error = split(w, "E ")
-            let actual_error = substitute(split_error[0],"^\\s\\+\\|\\s\\+$","","g") 
+            let actual_error = substitute(split_error[0],"^\\s\\+\\|\\s\\+$","","g")
             let match_error = matchlist(actual_error, '\v(\w+):\s+(.*)')
             if (len(match_error))
                 let error.exception = match_error[1]
@@ -616,8 +646,8 @@ function! s:ParseErrors(stdout)
             let match_file = matchlist(split_file[0], '\v"(.*.py)"')
             let error['file_path'] = match_file[1]
             let error['path'] = match_file[1]
-        elseif w =~ '\v^(.*)\.py:(\d+):'
-            let match_result = matchlist(w, '\v:(\d+):')
+        elseif w =~ '\v^(.*)\.py:(\d+)'
+            let match_result = matchlist(w, '\v:(\d+)')
             let error.line = match_result[1]
             let file_path = matchlist(w, '\v(.*.py):')
             let error.path = file_path[1]
@@ -626,7 +656,7 @@ function! s:ParseErrors(stdout)
             let split_error = split(w, "E ")
             let match_error = matchlist(split_error[0], '\v(\w+):')
             let error['exception'] = match_error[1]
-            let flat_error = substitute(split_error[0],"^\\s\\+\\|\\s\\+$","","g") 
+            let flat_error = substitute(split_error[0],"^\\s\\+\\|\\s\\+$","","g")
             let error.error = flat_error
         endif
     endfor
@@ -636,6 +666,12 @@ function! s:ParseErrors(stdout)
         let error.file_path = error.path
         let error.file_line = error.line
     endtry
+
+    " FIXME
+    " Now try to really make sure we have some stuff to pass
+    " who knows if we are getting more of these :/ quick fix for now
+    let error['exception'] = get(error, 'exception', 'UnmatchedException')
+    let error['error']     = get(error, 'error', 'py.test had an error, please see :Pytest session for more information')
     let errors[1] = error
 
     " Display the result Bars
@@ -667,20 +703,23 @@ endfunction
 
 
 function! s:ThisMethod(verbose, ...)
+    let save_cursor = getpos('.')
     call s:ClearAll()
     let m_name  = s:NameOfCurrentMethod()
     let c_name  = s:NameOfCurrentClass()
     let abspath = s:CurrentPath()
     if (strlen(m_name) == 1)
+        call setpos('.', save_cursor)
         call s:Echo("Unable to find a matching method for testing")
         return
     elseif (strlen(c_name) == 1)
+        call setpos('.', save_cursor)
         call s:Echo("Unable to find a matching class for testing")
         return
     endif
 
-    let path =  abspath . "::" . c_name . "::" . m_name 
-    let message = "py.test ==> Running test for method " . m_name 
+    let path =  abspath . "::" . c_name . "::" . m_name
+    let message = "py.test ==> Running test for method " . m_name
     call s:Echo(message, 1)
 
     if ((a:1 == '--pdb') || (a:1 == '-s'))
@@ -696,14 +735,16 @@ endfunction
 
 
 function! s:ThisFunction(verbose, ...)
+    let save_cursor = getpos('.')
     call s:ClearAll()
     let c_name      = s:NameOfCurrentFunction()
     let abspath     = s:CurrentPath()
     if (strlen(c_name) == 1)
+        call setpos('.', save_cursor)
         call s:Echo("Unable to find a matching function for testing")
         return
     endif
-    let message  = "py.test ==> Running tests for function " . c_name 
+    let message  = "py.test ==> Running tests for function " . c_name
     call s:Echo(message, 1)
 
     let path = abspath . "::" . c_name
@@ -722,14 +763,16 @@ endfunction
 
 
 function! s:ThisClass(verbose, ...)
+    let save_cursor = getpos('.')
     call s:ClearAll()
     let c_name      = s:NameOfCurrentClass()
     let abspath     = s:CurrentPath()
     if (strlen(c_name) == 1)
+        call setpos('.', save_cursor)
         call s:Echo("Unable to find a matching class for testing")
         return
     endif
-    let message  = "py.test ==> Running tests for class " . c_name 
+    let message  = "py.test ==> Running tests for class " . c_name
     call s:Echo(message, 1)
 
     let path = abspath . "::" . c_name
@@ -767,7 +810,7 @@ endfunction
 
 function! s:Pdb(path, ...)
     let pdb_command = "py.test " . a:1 . " " . a:path
-    if exists("g:ConqueTerm_Loaded") 
+    if exists("g:ConqueTerm_Loaded")
         call conque_term#open(pdb_command, ['split', 'resize 20'], 0)
     else
         exe ":!" . pdb_command
@@ -776,7 +819,7 @@ endfunction
 
 
 function! s:Version()
-    call s:Echo("pytest.vim version 1.0.0", 1)
+    call s:Echo("pytest.vim version 1.1.1", 1)
 endfunction
 
 
