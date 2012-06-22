@@ -94,8 +94,10 @@ function! s:LoopProxy(type)
             call s:ThisFile(0, 'False')
         endif
 
+        " FIXME Removing this for now until I can find
+        " a way of getting the bottom only on fails
         " Go to the very bottom window
-        call feedkeys("\<C-w>b", 'n')
+        "call feedkeys("\<C-w>b", 'n')
     else
         au! pytest_loop_autocmd
     endif
@@ -140,6 +142,7 @@ function! s:GoToInlineError(direction)
         let line_number  = select_error['file_line']
         let error_path   = select_error['file_path']
         let exception    = select_error['exception']
+        let error        = select_error['error']
 
         " Go to previous window
         exe 'wincmd p'
@@ -150,7 +153,7 @@ function! s:GoToInlineError(direction)
             exe 'wincmd p'
             let orig_line = _num+1
             exe orig_line
-            let message = "Failed test: " . _num . "\t ==>> " . exception
+            let message = "Failed test: " . _num . "\t ==>> " . exception . " ". error
             call s:Echo(message, 1)
             return
         else " we might have an error on another file
@@ -215,6 +218,7 @@ function! s:GoToError(direction)
             let line_number = select_error['line']
             let error_path = select_error['path']
             let exception = select_error['exception']
+            let error = select_error['error']
             let file_name = expand("%:t")
             if error_path =~ file_name
                 execute line_number
@@ -222,7 +226,7 @@ function! s:GoToError(direction)
                 call s:OpenError(error_path)
                 execute line_number
             endif
-            let message = going . " Failed test: " . g:pytest_session_error . "\t ==>> " . exception
+            let message = going . " Failed test: " . g:pytest_session_error . "\t ==>> " . exception . " " . error
             call s:Echo(message, 1)
             return
         endif
@@ -407,8 +411,9 @@ function! s:ShowFails(...)
         let exception   = err_dict['exception']
         let path_error  = err_dict['path']
         let ends        = err_dict['file_path']
+        let error       = err_dict['error']
         if (path_error == ends)
-            let message = printf('Line: %-*u ==>> %-*s ==>> %s', 6, line_number, 24, exception, path_error)
+            let message = printf('Line: %-*u ==>> %-*s %s ==>> %s', 6, line_number, 14, exception, error, path_error)
         else
             let message = printf('Line: %-*u ==>> %-*s ==>> %s', 6, line_number, 24, exception, ends)
         endif
@@ -493,6 +498,7 @@ endfunction
 
 
 function! s:ClearAll(...)
+    let current = winnr()
     let bufferL = [ 'Fails.pytest', 'LastSession.pytest', 'ShowError.pytest', 'PytestVerbose.pytest' ]
     for b in bufferL
         let _window = bufwinnr(b)
@@ -501,12 +507,15 @@ function! s:ClearAll(...)
             silent! execute 'q'
         endif
     endfor
+
     " Remove any echoed messages
     if (a:0 == 1)
         " Try going back to our starting window
         " and remove any left messages
         call s:Echo('')
         silent! execute 'wincmd p'
+    else
+        execute current . 'wincmd w'
     endif
 endfunction
 
@@ -547,7 +556,7 @@ function! s:RunPyTest(path)
             return
         endif
     endfor
-    call s:GreenBar()
+    call s:ParseSuccess(out)
 
     " If looponfail is set we no longer need it
     " So clear the autocomand and set the global var to 0
@@ -599,7 +608,7 @@ function! s:ParseFailures(stdout)
                 let file_path = matchlist(w, '\v(.*.py):')
                 let error.file_path = file_path[1]
             endif
-        elseif w =~  '\v^E\s+(.*)\s+'
+        elseif w =~  '\v^E\s+\w+(.*)\s+'
             let split_error = split(w, "E ")
             let actual_error = substitute(split_error[0],"^\\s\\+\\|\\s\\+$","","g")
             let match_error = matchlist(actual_error, '\v(\w+):\s+(.*)')
@@ -607,7 +616,7 @@ function! s:ParseFailures(stdout)
                 let error.exception = match_error[1]
                 let error.error = match_error[2]
             else
-                let error.exception = "UnmatchedException"
+                let error.exception = "AssertionError"
                 let error.error = actual_error
             endif
         elseif w =~ '\v^(.*)\s*ERROR:\s+'
@@ -670,7 +679,7 @@ function! s:ParseErrors(stdout)
     " FIXME
     " Now try to really make sure we have some stuff to pass
     " who knows if we are getting more of these :/ quick fix for now
-    let error['exception'] = get(error, 'exception', 'UnmatchedException')
+    let error['exception'] = get(error, 'exception', 'AssertionError')
     let error['error']     = get(error, 'error', 'py.test had an error, please see :Pytest session for more information')
     let errors[1] = error
 
@@ -679,6 +688,31 @@ function! s:ParseErrors(stdout)
         let g:pytest_session_errors = errors
         call s:ShowFails(1)
     elseif (failed == 0)
+        call s:GreenBar()
+    endif
+endfunction
+
+
+function! s:ParseSuccess(stdout) abort
+    let passed = 0
+    " A passing test (or tests would look like:
+    " ========================== 17 passed in 0.43 seconds ===========================
+    " this would insert that into the resulting GreenBar but only the
+    " interesting portion
+    for w in split(a:stdout, '\n')
+        if w =~ '\v^\={14,}\s+\d+\s+passed\s+in\s+'
+            let passed = matchlist(w, '\v\d+\s+passed(.*)\s+')[0]
+        endif
+    endfor
+    " fix this obvious redundancy
+    if passed
+        redraw
+        let length = strlen(passed) + 1
+        hi GreenBar ctermfg=black ctermbg=green guibg=green
+        echohl GreenBar
+        echon passed . repeat(" ",&columns - length)
+        echohl
+    else
         call s:GreenBar()
     endif
 endfunction
@@ -695,9 +729,9 @@ endfunction
 
 function! s:GreenBar()
     redraw
-    hi GreenBar ctermfg=white ctermbg=green guibg=green
+    hi GreenBar ctermfg=black ctermbg=green guibg=green
     echohl GreenBar
-    echon repeat(" ",&columns - 1)
+    echon "All tests passed." . repeat(" ",&columns - 18)
     echohl
 endfunction
 
@@ -819,7 +853,7 @@ endfunction
 
 
 function! s:Version()
-    call s:Echo("pytest.vim version 1.1.1", 1)
+    call s:Echo("pytest.vim version 1.1.4", 1)
 endfunction
 
 
@@ -835,6 +869,11 @@ endfunction
 
 
 function! s:Proxy(action, ...)
+    if (executable("py.test") == 0)
+        call s:Echo("py.test not found. This plugin needs py.test installed and accessible")
+        return
+    endif
+
     " Some defaults
     let verbose = 0
     let pdb     = 'False'
@@ -908,4 +947,3 @@ endfunction
 
 
 command! -nargs=+ -complete=custom,s:Completion Pytest call s:Proxy(<f-args>)
-
